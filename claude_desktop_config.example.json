@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "kb-api": {
+      "command": "python",
+      "args": ["kb_mcp_server.py"],
+      "cwd": "/path/to/kb-mcp-server"
+    }
+  }
+}
