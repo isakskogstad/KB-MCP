@@ -11,7 +11,13 @@ MCP-server för åtkomst till **Kungliga bibliotekets öppna API:er** - Sveriges
 | **Swepub** | Forskningspublikationer | 2M+ |
 | **id.kb.se** | Auktoriteter & vokabulär | 500K+ |
 
-**52 verktyg** fördelade på 10 API-endpoints.
+### Version 2.1.0
+
+| Funktion | Antal |
+|----------|-------|
+| **Verktyg (Tools)** | 57 |
+| **Resurser (Resources)** | 7 |
+| **Promptmallar (Prompts)** | 8 |
 
 ## 🚀 Installation
 
@@ -185,6 +191,46 @@ Dokumentation och metadata.
 | `kb_search_tips` | Söktips och syntax |
 | `kb_data_dictionary` | Datadefinitioner |
 | `kb_example_queries` | Exempelfrågor |
+
+### 11. Nya förbättrade verktyg (5 verktyg)
+Kraftfulla verktyg för avancerade användningsfall.
+
+| Verktyg | Beskrivning |
+|---------|-------------|
+| `combined_search` | Sök i flera databaser samtidigt |
+| `quick_stats` | Snabbstatistik från alla API:er |
+| `find_related_works` | Hitta relaterade verk |
+| `historical_periods_search` | Sök efter historisk period |
+| `swedish_counties_info` | Lista svenska län |
+
+## 📚 MCP Resources
+
+Read-only resurser för dokumentation och referens:
+
+| Resurs URI | Beskrivning |
+|------------|-------------|
+| `kb://api/overview` | Översikt över alla API:er |
+| `kb://search/syntax` | Komplett söksyntax-guide |
+| `kb://examples/libris` | Libris-exempel |
+| `kb://examples/ksamsok` | K-samsök-exempel |
+| `kb://examples/sparql` | SPARQL-exempel |
+| `kb://examples/research` | Swepub-exempel |
+| `kb://data/objecttypes` | K-samsök objekttyper |
+
+## 💬 MCP Prompts
+
+Fördefinierade promptmallar för vanliga uppgifter:
+
+| Prompt | Beskrivning | Parametrar |
+|--------|-------------|------------|
+| `prompt_find_books_by_author` | Hitta böcker av författare | `author_name` |
+| `prompt_research_topic` | Utforska ett ämne | `topic` |
+| `prompt_genealogy_search` | Släktforskning | `parish`, `county` |
+| `prompt_cultural_heritage_location` | Kulturarv per län | `county` |
+| `prompt_export_bibliography` | Skapa bibliografi | `topic`, `format` |
+| `prompt_sparql_analysis` | SPARQL-analys | `analysis_type` |
+| `prompt_time_period_search` | Tidsperiod-sökning | `from_year`, `to_year` |
+| `prompt_compare_institutions` | Jämför lärosäten | `institution1`, `institution2` |
 
 ## 📖 Användningsexempel
 
