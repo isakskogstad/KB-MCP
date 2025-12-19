@@ -7,7 +7,15 @@ Stöder:
 - Lokal installation (stdio) för Claude Desktop, Claude Code
 - Remote deployment (HTTP) för ChatGPT, Render hosting
 
-Version: 2.1.0
+Version: 2.2.0
+
+Nya funktioner i 2.2.0:
+- Automatisk retry med exponentiell backoff
+- In-memory cache för förbättrad prestanda
+- Miljövariabel-konfiguration
+- Nya verktyg: cache-hantering, batch-operationer, citatgenerator
+- Förbättrade resurser och prompts
+- Bättre felhantering och connection pooling
 
 Nya funktioner i 2.1.0:
 - MCP Resources för read-only dokumentation och exempel
@@ -21,7 +29,7 @@ import json
 import os
 import sys
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, List, Dict
 from urllib.parse import urlencode, quote_plus
 
 # MCP imports
@@ -30,14 +38,21 @@ from pydantic import Field
 
 # API client imports
 from src.api_client import (
-    api_client, 
-    URLS, 
+    api_client,
+    URLS,
     handle_api_error,
     parse_ksamsok_xml,
     parse_oaipmh_xml,
     format_libris_results,
     format_ksamsok_results,
-    format_sparql_results
+    format_sparql_results,
+    format_swepub_results,
+    format_ris,
+    format_bibtex,
+    get_cache_stats,
+    clear_cache,
+    get_config,
+    Config
 )
 
 # Konfigurera logging till stderr
@@ -466,6 +481,181 @@ ksamsok_search(query="itemType=Building AND fromTime>=1600")
 """
 
 
+@mcp.resource("kb://data/historicalperiods")
+def resource_historical_periods() -> str:
+    """Svenska historiska perioder med årtal."""
+    return """# Svenska historiska perioder
+
+Fördefinierade tidsperioder för sökning i K-samsök.
+
+## Perioder
+
+| Period | Årtal | Beskrivning |
+|--------|-------|-------------|
+| Vikingatid | 800-1100 | Vikingaexpansion, runstenar, Birka |
+| Medeltid | 1100-1520 | Kristnande, kloster, hansan |
+| Vasatid | 1520-1611 | Gustav Vasa, reformation, nationell enhet |
+| Stormaktstid | 1611-1721 | Svensk expansion, krig, kultur |
+| Frihetstid | 1721-1772 | Riksdagsstyre, vetenskap, Linné |
+| Gustaviansk tid | 1772-1809 | Gustav III, kultur, upplysning |
+| 1800-tal | 1800-1899 | Industrialisering, emigration, demokrati |
+| 1900-tal | 1900-1999 | Modernisering, folkhem, välfärd |
+
+## Användning
+
+```
+historical_periods_search(period="vikingatid")
+historical_periods_search(period="stormaktstid", item_type="Building")
+ksamsok_search_time(from_year=1611, to_year=1721)
+```
+
+## Tips
+- Kombinera med objekttyp för mer specifika resultat
+- Runstenar finns främst i vikingatid
+- Byggnader bevarade från medeltid och framåt
+- Fotografier finns främst från 1840-talet och framåt
+"""
+
+
+@mcp.resource("kb://data/universities")
+def resource_universities() -> str:
+    """Svenska lärosäten för Swepub-sökning."""
+    return """# Svenska lärosäten (Swepub)
+
+Organisationsnamn för sökning i Swepub forskningspublikationer.
+
+## Universitet
+
+| Lärosäte | Sökterm |
+|----------|---------|
+| Uppsala universitet | `swepub_search_affiliation(organization="Uppsala universitet")` |
+| Lunds universitet | `swepub_search_affiliation(organization="Lunds universitet")` |
+| Stockholms universitet | `swepub_search_affiliation(organization="Stockholms universitet")` |
+| Göteborgs universitet | `swepub_search_affiliation(organization="Göteborgs universitet")` |
+| Umeå universitet | `swepub_search_affiliation(organization="Umeå universitet")` |
+| Linköpings universitet | `swepub_search_affiliation(organization="Linköpings universitet")` |
+| Karolinska institutet | `swepub_search_affiliation(organization="Karolinska Institutet")` |
+| KTH | `swepub_search_affiliation(organization="KTH")` |
+| Chalmers | `swepub_search_affiliation(organization="Chalmers tekniska högskola")` |
+| Luleå tekniska universitet | `swepub_search_affiliation(organization="Luleå tekniska universitet")` |
+
+## Högskolor (urval)
+
+| Lärosäte | Sökterm |
+|----------|---------|
+| Malmö universitet | `organization="Malmö universitet"` |
+| Örebro universitet | `organization="Örebro universitet"` |
+| Mittuniversitetet | `organization="Mittuniversitetet"` |
+| Linnéuniversitetet | `organization="Linnéuniversitetet"` |
+| Karlstads universitet | `organization="Karlstads universitet"` |
+| Södertörns högskola | `organization="Södertörns högskola"` |
+| Högskolan i Borås | `organization="Högskolan i Borås"` |
+| Mälardalens universitet | `organization="Mälardalens universitet"` |
+
+## Jämföra lärosäten
+
+```
+prompt_compare_institutions(
+    institution1="Uppsala universitet",
+    institution2="Lunds universitet"
+)
+```
+"""
+
+
+@mcp.resource("kb://data/subjectcodes")
+def resource_subject_codes() -> str:
+    """SCB forskningsämnen för Swepub."""
+    return """# SCB Forskningsämnen (Swepub)
+
+Standard för klassificering av svensk forskning enligt SCB.
+
+## Huvudområden
+
+| Kod | Område | Exempel på underämnen |
+|-----|--------|----------------------|
+| 1 | Naturvetenskap | Matematik, Fysik, Kemi, Biologi, Geovetenskap |
+| 2 | Teknik | Elektroteknik, Maskinteknik, Materialteknik, IT |
+| 3 | Medicin och hälsovetenskap | Klinisk medicin, Folkhälsa, Farmaci, Odontologi |
+| 4 | Lantbruksvetenskap | Jordbruk, Trädgård, Skogsbruk, Veterinär |
+| 5 | Samhällsvetenskap | Ekonomi, Psykologi, Juridik, Statsvetenskap, Sociologi |
+| 6 | Humaniora och konst | Historia, Språk, Litteratur, Filosofi, Konst, Religion |
+
+## Användning
+
+```
+swepub_search_subject(subject_code="medicin")
+swepub_search_subject(subject_code="datavetenskap")
+swepub_search(query="ämne:historia")
+```
+
+## Tips
+- Sök på svenska eller engelska ämnesord
+- Kombinera med lärosäte för mer specifika resultat
+- Använd export för att spara till referenshanterare
+"""
+
+
+@mcp.resource("kb://config/environment")
+def resource_environment_config() -> str:
+    """Miljövariabel-konfiguration för KB MCP Server."""
+    return """# KB MCP Server - Miljövariabler
+
+Servern kan konfigureras via miljövariabler.
+
+## Timeout-inställningar
+
+| Variabel | Standard | Beskrivning |
+|----------|----------|-------------|
+| `KB_HTTP_TIMEOUT` | 30.0 | Maximal tid för HTTP-anrop (sekunder) |
+| `KB_CONNECT_TIMEOUT` | 10.0 | Maximal tid för att upprätta anslutning |
+
+## Retry-inställningar
+
+| Variabel | Standard | Beskrivning |
+|----------|----------|-------------|
+| `KB_MAX_RETRIES` | 3 | Max antal omförsök vid tillfälliga fel |
+| `KB_RETRY_BASE_DELAY` | 1.0 | Basfördröjning mellan försök (sekunder) |
+| `KB_RETRY_MAX_DELAY` | 30.0 | Maximal fördröjning mellan försök |
+
+## Cache-inställningar
+
+| Variabel | Standard | Beskrivning |
+|----------|----------|-------------|
+| `KB_CACHE_ENABLED` | true | Aktivera/avaktivera cache |
+| `KB_CACHE_TTL` | 300 | Cache-livslängd i sekunder (5 min) |
+| `KB_CACHE_MAX_SIZE` | 1000 | Max antal cachade poster |
+
+## Övrigt
+
+| Variabel | Standard | Beskrivning |
+|----------|----------|-------------|
+| `KB_USER_AGENT` | KB-MCP-Server/2.2.0 | User-Agent för HTTP-anrop |
+
+## Exempel
+
+```bash
+# Längre timeout för långsamma nätverk
+export KB_HTTP_TIMEOUT=60
+
+# Fler omförsök vid instabil anslutning
+export KB_MAX_RETRIES=5
+
+# Avaktivera cache för debugging
+export KB_CACHE_ENABLED=false
+
+# Längre cache för statisk data
+export KB_CACHE_TTL=3600
+```
+
+## Visa aktuell konfiguration
+
+```
+kb_server_config()
+```
+"""
+
+
 # ============================================================================
 # MCP PROMPTS - Fördefinierade promptmallar
 # ============================================================================
@@ -699,6 +889,116 @@ def prompt_compare_institutions(institution1: str, institution2: str) -> str:
    - Styrkeområden för respektive lärosäte
 
 Genomför jämförelsen nu."""
+
+
+@mcp.prompt()
+def prompt_create_bibliography(
+    topic: str,
+    format: str = "ris",
+    include_research: bool = True
+) -> str:
+    """Skapa en komplett bibliografi för ett ämne."""
+    return f"""Jag behöver en komplett bibliografi om "{topic}".
+
+## Steg
+
+1. **Sök böcker (Libris)**
+   - Använd `libris_search_subject(subject="{topic}", limit=30)`
+   - Notera de viktigaste verken
+
+2. **Sök forskning (Swepub)** {"" if not include_research else f'''
+   - Använd `swepub_search(query="{topic}", limit=20)`
+   - Inkludera relevanta forskningspublikationer'''}
+
+3. **Exportera**
+   - Använd `export_subject_bibliography(subject="{topic}", format="{format}")`
+   - Format: {format.upper()} {'(för Zotero/EndNote)' if format == 'ris' else '(för LaTeX)'}
+
+4. **Leverera**
+   - Visa den exporterade bibliografin
+   - Ge instruktioner för import
+
+Skapa bibliografin nu."""
+
+
+@mcp.prompt()
+def prompt_local_history(
+    municipality: str,
+    county: str = ""
+) -> str:
+    """Utforska lokalhistoria för en kommun."""
+    county_filter = f' i {county}' if county else ''
+    return f"""Jag vill utforska lokalhistorian för {municipality}{county_filter}.
+
+## Sökplan
+
+1. **Historiska fotografier**
+   ```
+   ksamsok_search_location(municipality="{municipality}", item_type="Photograph")
+   ```
+
+2. **Historiska byggnader**
+   ```
+   ksamsok_search_location(municipality="{municipality}", item_type="Building")
+   ```
+
+3. **Kartor**
+   ```
+   ksamsok_search(query='itemType=Map AND municipalityName="{municipality}"')
+   ```
+
+4. **Litteratur om platsen**
+   ```
+   libris_search(query="{municipality}")
+   ```
+
+5. **Statistik över kulturarvet**
+   ```
+   ksamsok_statistics(index="itemType", query='municipalityName="{municipality}"')
+   ```
+
+Sammanfatta de mest intressanta fynden och ge en historisk överblick av {municipality}."""
+
+
+@mcp.prompt()
+def prompt_author_deep_dive(author_name: str) -> str:
+    """Djupgående analys av en författares verk och betydelse."""
+    return f"""Jag vill göra en djupgående analys av författaren {author_name}.
+
+## Analys
+
+1. **Komplett bibliografi**
+   ```
+   libris_search_author(author_name="{author_name}", limit=50)
+   ```
+
+2. **Första utgåvor och viktiga verk**
+   ```
+   libris_find(query="författare:{author_name}", limit=30)
+   ```
+
+3. **Litteratur OM författaren**
+   ```
+   libris_search(query="{author_name}")
+   ```
+
+4. **Akademisk forskning**
+   ```
+   swepub_search(query="{author_name}")
+   ```
+
+5. **Kulturarvsmaterial**
+   ```
+   ksamsok_search(query='text="{author_name}"')
+   ```
+
+## Sammanställning
+- Kronologisk verklista
+- Viktigaste verk och deras betydelse
+- Kritisk reception och forskning
+- Kulturhistorisk kontext
+
+Genomför analysen nu."""
 
 
 # ============================================================================
@@ -3011,7 +3311,7 @@ async def kb_api_info() -> str:
     Visa översikt över alla tillgängliga KB API:er och verktyg.
     Startpunkt för att förstå vad som finns tillgängligt.
     """
-    return """## Kungliga bibliotekets öppna API:er
+    return """## Kungliga bibliotekets öppna API:er (v2.2.0)
 
 ### 📚 Biblioteksdata (Libris)
 - **libris_search**: Enkel sökning i 20M+ poster
@@ -3045,12 +3345,22 @@ async def kb_api_info() -> str:
 - **sparql_query/describe/count**: RDF-frågor
 - **sparql_templates**: Fördefinierade frågor
 
-### 📤 Export
+### 📤 Export & Citat
 - **export_author/subject_bibliography**: Bibliografier
 - **export_search_results/publication_list**: Anpassad export
+- **generate_citation**: Akademiska citat (APA, MLA, Chicago, Harvard)
+
+### 🔧 Verktyg & Administration (nya i 2.2.0)
+- **batch_search**: Sök flera termer samtidigt
+- **compare_terms**: Jämför söktermer
+- **year_range_search**: Sökning inom årtalsintervall
+- **kb_cache_stats/clear**: Cache-hantering
+- **kb_server_config**: Visa konfiguration
 
 ---
-**Totalt:** 52 verktyg | **Data:** 20M+ bibliografiska poster, 10M+ kulturarvsobjekt
+**Totalt:** 65 verktyg | 11 resurser | 11 prompts
+**Data:** 20M+ bibliografiska poster, 10M+ kulturarvsobjekt
+**Nya funktioner:** Automatisk retry, cache, miljövariabler
 """
 
 
@@ -3338,6 +3648,398 @@ sparql_templates(category="authors")
 
 
 # ============================================================================
+# 11. SERVER & CACHE MANAGEMENT (nya i 2.2.0)
+# ============================================================================
+
+@mcp.tool()
+async def kb_server_config() -> str:
+    """
+    Visa aktuell serverkonfiguration.
+    Visar timeout, retry, cache och andra inställningar.
+    """
+    config = get_config()
+    cache_stats = get_cache_stats()
+
+    lines = [
+        "## KB MCP Server Konfiguration",
+        "",
+        "### Timeout",
+        f"- HTTP timeout: {config['http_timeout']}s",
+        f"- Connect timeout: {config['connect_timeout']}s",
+        "",
+        "### Retry",
+        f"- Max retries: {config['max_retries']}",
+        f"- Base delay: {config['retry_base_delay']}s",
+        f"- Max delay: {config['retry_max_delay']}s",
+        "",
+        "### Cache",
+        f"- Enabled: {config['cache_enabled']}",
+        f"- TTL: {config['cache_ttl']}s",
+        f"- Max size: {config['cache_max_size']}",
+        "",
+        "### Cache-statistik",
+        f"- Storlek: {cache_stats['size']}/{cache_stats['max_size']}",
+        f"- Hits: {cache_stats['hits']}",
+        f"- Misses: {cache_stats['misses']}",
+        f"- Hit rate: {cache_stats['hit_rate']}",
+        "",
+        "### Identifikation",
+        f"- User-Agent: {config['user_agent'][:50]}..."
+    ]
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def kb_cache_clear() -> str:
+    """
+    Rensa serverns cache.
+    Användbart om data verkar inaktuell.
+    """
+    stats_before = get_cache_stats()
+    clear_cache()
+
+    return f"""## Cache rensad
+
+**Före rensning:**
+- Cachade poster: {stats_before['size']}
+- Hits: {stats_before['hits']}
+- Misses: {stats_before['misses']}
+
+**Efter rensning:**
+- Cachen är nu tom
+- Nya anrop kommer att hämta färsk data från API:erna
+
+*Tips: Cachen fylls på automatiskt när du gör nya sökningar.*"""
+
+
+@mcp.tool()
+async def kb_cache_stats() -> str:
+    """
+    Visa cache-statistik.
+    Hjälper att förstå hur cachen används.
+    """
+    stats = get_cache_stats()
+
+    return f"""## Cache-statistik
+
+| Mätvärde | Värde |
+|----------|-------|
+| Cachade poster | {stats['size']} |
+| Max storlek | {stats['max_size']} |
+| TTL | {stats['ttl_seconds']} sekunder |
+| Cache hits | {stats['hits']} |
+| Cache misses | {stats['misses']} |
+| Hit rate | {stats['hit_rate']} |
+
+### Förklaring
+- **Hit rate** visar hur ofta cachen kunde leverera data utan API-anrop
+- Högre hit rate = bättre prestanda och färre API-anrop
+- TTL anger hur länge data behålls i cachen
+
+### Rensa cache
+```
+kb_cache_clear()
+```"""
+
+
+@mcp.tool()
+async def batch_search(
+    queries: str = Field(description="Kommaseparerade söktermer, t.ex. 'Strindberg, Lagerlöf, Lindgren'"),
+    source: str = Field(default="libris", description="Källa: 'libris', 'ksamsok', 'swepub'"),
+    limit_per_query: int = Field(default=5, ge=1, le=20, description="Max resultat per sökterm")
+) -> str:
+    """
+    Sök efter flera termer i en enda operation.
+    Perfekt för att jämföra eller samla data om flera ämnen/personer.
+    """
+    terms = [t.strip() for t in queries.split(",") if t.strip()]
+
+    if not terms:
+        return "Ange minst en sökterm (kommaseparerat för flera)."
+
+    if len(terms) > 10:
+        return "Max 10 söktermer per anrop."
+
+    results = [f"## Batch-sökning i {source.upper()}", f"**Söktermer:** {len(terms)}", ""]
+
+    for term in terms:
+        results.append(f"### {term}")
+
+        try:
+            if source == "libris":
+                params = {"query": term, "n": limit_per_query, "format": "json", "format_extended": "true"}
+                response = await api_client.get(URLS["libris_xsearch"], params=params)
+                data = response.json()
+                items = data.get("xsearch", {}).get("list", [])
+                total = data.get("xsearch", {}).get("records", 0)
+
+                results.append(f"*{total} träffar totalt*\n")
+                for item in items:
+                    title = item.get("title", "Utan titel")
+                    creator = item.get("creator", "Okänd")
+                    date = item.get("date", "")
+                    results.append(f"- **{title}** - {creator} ({date})")
+
+            elif source == "ksamsok":
+                params = {"method": "search", "query": f"text={term}", "hitsPerPage": limit_per_query}
+                response = await api_client.get(URLS["ksamsok"], params=params, accept="application/xml")
+                data = parse_ksamsok_xml(response.text)
+                records = data.get("records", [])
+                total = data.get("total_hits", 0)
+
+                results.append(f"*{total} objekt totalt*\n")
+                for record in records:
+                    label = record.get("label", "Utan benämning")
+                    obj_type = record.get("type", "")
+                    results.append(f"- **{label}** ({obj_type})")
+
+            elif source == "swepub":
+                params = {"query": term, "database": "swepub", "n": limit_per_query, "format": "json"}
+                response = await api_client.get(URLS["swepub"], params=params)
+                data = response.json()
+                items = data.get("xsearch", {}).get("list", [])
+                total = data.get("xsearch", {}).get("records", 0)
+
+                results.append(f"*{total} publikationer totalt*\n")
+                for item in items:
+                    title = item.get("title", "Utan titel")
+                    creator = item.get("creator", "Okänd")
+                    results.append(f"- **{title}** - {creator}")
+
+            else:
+                results.append(f"Okänd källa: {source}")
+
+        except Exception as e:
+            results.append(f"Fel: {str(e)}")
+
+        results.append("")
+
+    return "\n".join(results)
+
+
+@mcp.tool()
+async def generate_citation(
+    record_id: str = Field(description="Libris post-ID för att generera citat"),
+    style: str = Field(default="apa", description="Citationsstil: 'apa', 'mla', 'chicago', 'harvard'")
+) -> str:
+    """
+    Generera akademiskt korrekt citat för en Libris-post.
+    Stödjer APA, MLA, Chicago och Harvard-stilar.
+    """
+    try:
+        # Hämta posten
+        if not record_id.startswith(("http", "/")):
+            record_id = f"/{record_id}"
+
+        url = f"{URLS['libris_xl']}{record_id}"
+        response = await api_client.get(url, accept="application/ld+json")
+        data = response.json()
+
+        main = data.get("mainEntity", data.get("@graph", [{}])[0] if "@graph" in data else data)
+
+        # Extrahera fält
+        title = "Utan titel"
+        if "hasTitle" in main:
+            titles = main["hasTitle"]
+            if isinstance(titles, list) and titles:
+                title = titles[0].get("mainTitle", "Utan titel")
+            elif isinstance(titles, dict):
+                title = titles.get("mainTitle", "Utan titel")
+
+        authors = []
+        if "contribution" in main:
+            contribs = main["contribution"]
+            if isinstance(contribs, list):
+                for contrib in contribs[:3]:
+                    agent = contrib.get("agent", {})
+                    name = agent.get("name", "")
+                    if name:
+                        authors.append(name)
+
+        author_str = ", ".join(authors) if authors else "Okänd författare"
+
+        year = ""
+        publisher = ""
+        place = ""
+        if "publication" in main:
+            pubs = main["publication"]
+            if isinstance(pubs, list) and pubs:
+                pub = pubs[0]
+                year = pub.get("year", "u.å.")
+                place_data = pub.get("place", {})
+                place = place_data.get("label", "") if isinstance(place_data, dict) else ""
+                agent_data = pub.get("agent", {})
+                publisher = agent_data.get("label", "") if isinstance(agent_data, dict) else ""
+
+        # Generera citat baserat på stil
+        citations = {
+            "apa": f"{author_str} ({year}). *{title}*. {publisher}.",
+            "mla": f"{author_str}. *{title}*. {publisher}, {year}.",
+            "chicago": f"{author_str}. *{title}*. {place}: {publisher}, {year}.",
+            "harvard": f"{author_str} ({year}) *{title}*. {place}: {publisher}."
+        }
+
+        if style not in citations:
+            style = "apa"
+
+        lines = [
+            f"## Citat för: {title}",
+            "",
+            f"### {style.upper()}-format",
+            "",
+            citations[style],
+            "",
+            "---",
+            "",
+            "### Alla format",
+            f"**APA:** {citations['apa']}",
+            f"**MLA:** {citations['mla']}",
+            f"**Chicago:** {citations['chicago']}",
+            f"**Harvard:** {citations['harvard']}",
+            "",
+            f"*Källa: {url}*"
+        ]
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return handle_api_error(e, "generate_citation")
+
+
+@mcp.tool()
+async def compare_terms(
+    term1: str = Field(description="Första söktermen"),
+    term2: str = Field(description="Andra söktermen"),
+    source: str = Field(default="libris", description="Källa: 'libris', 'ksamsok', 'swepub'")
+) -> str:
+    """
+    Jämför två söktermer och visa skillnader i antal träffar och resultat.
+    Användbart för att se popularitet eller tillgänglighet.
+    """
+    results = [f"## Jämförelse: {term1} vs {term2}", f"**Källa:** {source}", ""]
+
+    term1_data = {"total": 0, "items": []}
+    term2_data = {"total": 0, "items": []}
+
+    try:
+        if source == "libris":
+            for term, data_store in [(term1, term1_data), (term2, term2_data)]:
+                params = {"query": term, "n": 5, "format": "json", "format_extended": "true"}
+                response = await api_client.get(URLS["libris_xsearch"], params=params)
+                data = response.json()
+                data_store["total"] = data.get("xsearch", {}).get("records", 0)
+                data_store["items"] = data.get("xsearch", {}).get("list", [])
+
+        elif source == "ksamsok":
+            for term, data_store in [(term1, term1_data), (term2, term2_data)]:
+                params = {"method": "search", "query": f"text={term}", "hitsPerPage": 5}
+                response = await api_client.get(URLS["ksamsok"], params=params, accept="application/xml")
+                data = parse_ksamsok_xml(response.text)
+                data_store["total"] = data.get("total_hits", 0)
+                data_store["items"] = data.get("records", [])
+
+        elif source == "swepub":
+            for term, data_store in [(term1, term1_data), (term2, term2_data)]:
+                params = {"query": term, "database": "swepub", "n": 5, "format": "json"}
+                response = await api_client.get(URLS["swepub"], params=params)
+                data = response.json()
+                data_store["total"] = data.get("xsearch", {}).get("records", 0)
+                data_store["items"] = data.get("xsearch", {}).get("list", [])
+
+    except Exception as e:
+        return handle_api_error(e, "compare_terms")
+
+    # Jämförelse
+    diff = term1_data["total"] - term2_data["total"]
+    if diff > 0:
+        winner = f"**{term1}** har {abs(diff):,} fler träffar"
+    elif diff < 0:
+        winner = f"**{term2}** har {abs(diff):,} fler träffar"
+    else:
+        winner = "Lika många träffar"
+
+    results.extend([
+        "### Antal träffar",
+        f"| Term | Träffar |",
+        f"|------|---------|",
+        f"| {term1} | {term1_data['total']:,} |",
+        f"| {term2} | {term2_data['total']:,} |",
+        "",
+        f"**Resultat:** {winner}",
+        "",
+        f"### Topresultat: {term1}",
+    ])
+
+    for item in term1_data["items"][:3]:
+        if source == "ksamsok":
+            results.append(f"- {item.get('label', 'Okänd')}")
+        else:
+            results.append(f"- {item.get('title', 'Okänd')}")
+
+    results.extend(["", f"### Topresultat: {term2}"])
+
+    for item in term2_data["items"][:3]:
+        if source == "ksamsok":
+            results.append(f"- {item.get('label', 'Okänd')}")
+        else:
+            results.append(f"- {item.get('title', 'Okänd')}")
+
+    return "\n".join(results)
+
+
+@mcp.tool()
+async def year_range_search(
+    from_year: int = Field(description="Startår"),
+    to_year: int = Field(description="Slutår"),
+    query: str = Field(default="", description="Valfri sökterm att kombinera med"),
+    limit: int = Field(default=20, ge=1, le=100, description="Max antal resultat")
+) -> str:
+    """
+    Sök böcker utgivna under ett specifikt årtalsintervall i Libris.
+    Kan kombineras med en sökterm.
+    """
+    try:
+        search_query = f"år:[{from_year} TO {to_year}]"
+        if query:
+            search_query = f"{query} AND {search_query}"
+
+        params = {
+            "query": search_query,
+            "n": limit,
+            "format": "json",
+            "format_extended": "true"
+        }
+
+        response = await api_client.get(URLS["libris_xsearch"], params=params)
+        data = response.json()
+        xsearch = data.get("xsearch", {})
+        total = xsearch.get("records", 0)
+        items = xsearch.get("list", [])
+
+        lines = [
+            f"## Böcker {from_year}-{to_year}",
+            f"**Sökterm:** {query if query else '(alla)'}",
+            f"**Totalt:** {total:,} träffar",
+            ""
+        ]
+
+        # Gruppera efter decennium om möjligt
+        for i, item in enumerate(items, 1):
+            title = item.get("title", "Utan titel")
+            creator = item.get("creator", "Okänd")
+            date = item.get("date", "u.å.")
+
+            lines.append(f"{i}. **{title}**")
+            lines.append(f"   {creator} ({date})")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return handle_api_error(e, "year_range_search")
+
+
+# ============================================================================
 # SERVER RUNNERS
 # ============================================================================
 
@@ -3354,14 +4056,23 @@ def run_http(host: str = "0.0.0.0", port: int = 8000):
     from starlette.responses import JSONResponse
     
     async def health(request):
-        return JSONResponse({"status": "healthy", "server": "kb-api", "version": "2.0.0"})
-    
+        return JSONResponse({"status": "healthy", "server": "kb-api", "version": "2.2.0"})
+
     async def info(request):
         return JSONResponse({
             "name": "kb-api",
-            "version": "2.0.0",
+            "version": "2.2.0",
             "description": "Kungliga bibliotekets öppna API:er via MCP",
-            "tools": 52,
+            "tools": 65,
+            "resources": 11,
+            "prompts": 11,
+            "features": [
+                "retry with exponential backoff",
+                "in-memory caching",
+                "environment variable configuration",
+                "batch operations",
+                "citation generation"
+            ],
             "endpoints": ["libris", "ksamsok", "oaipmh", "data.kb.se", "swepub", "id.kb.se", "sparql"]
         })
     
