@@ -207,9 +207,9 @@ RETRYABLE_EXCEPTIONS = (
 async def retry_with_backoff(
     func,
     *args,
-    max_retries: int = None,
-    base_delay: float = None,
-    max_delay: float = None,
+    max_retries: Optional[int] = None,
+    base_delay: Optional[float] = None,
+    max_delay: Optional[float] = None,
     **kwargs
 ) -> Any:
     """
@@ -231,7 +231,7 @@ async def retry_with_backoff(
     base_delay = base_delay or Config.RETRY_BASE_DELAY
     max_delay = max_delay or Config.RETRY_MAX_DELAY
 
-    last_exception = None
+    last_exception: Optional[BaseException] = None
 
     for attempt in range(max_retries + 1):
         try:
@@ -263,7 +263,9 @@ async def retry_with_backoff(
                 )
                 await asyncio.sleep(delay)
 
-    raise last_exception
+    if last_exception is not None:
+        raise last_exception
+    raise RuntimeError("retry_with_backoff exited without result or exception")
 
 
 # ============================================================================
@@ -484,7 +486,7 @@ def parse_ksamsok_xml(xml_text: str) -> Dict[str, Any]:
 
         # Hitta totalt antal träffar
         total_hits_elem = root.find(".//totalHits")
-        total_hits = int(total_hits_elem.text) if total_hits_elem is not None else 0
+        total_hits = int(total_hits_elem.text or 0) if total_hits_elem is not None else 0
 
         records = []
         for record in root.findall(".//record"):
@@ -591,10 +593,12 @@ def parse_oaipmh_xml(xml_text: str) -> Dict[str, Any]:
         if token is not None and token.text:
             result["resumption_token"] = token.text
             # Extrahera attribut om de finns
-            if token.get("completeListSize"):
-                result["total_size"] = int(token.get("completeListSize"))
-            if token.get("cursor"):
-                result["cursor"] = int(token.get("cursor"))
+            complete_size = token.get("completeListSize")
+            if complete_size:
+                result["total_size"] = int(complete_size)
+            cursor = token.get("cursor")
+            if cursor:
+                result["cursor"] = int(cursor)
 
         return result
 
