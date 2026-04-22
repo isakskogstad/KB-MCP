@@ -58,28 +58,6 @@ Lägg till i `~/Library/Application Support/Claude/claude_desktop_config.json` (
 
 Starta om Claude Desktop.
 
-### Remote deployment (Render)
-
-1. **Push till GitHub**
-2. **Skapa ny Web Service på Render:**
-   - Välj repository
-   - Build Command: `pip install -r requirements.txt`
-   - Start Command: `python kb_mcp_server.py --http --port $PORT`
-3. **Hämta URL:** `https://your-service.onrender.com`
-
-Alternativt, använd Blueprint:
-
-```bash
-render blueprint sync
-```
-
-### Docker
-
-```bash
-docker build -t kb-mcp-server .
-docker run -p 8000:8000 kb-mcp-server
-```
-
 ## 🔧 Verktyg per Endpoint
 
 ### 1. Libris Xsearch (5 verktyg)
@@ -271,12 +249,12 @@ export_author_bibliography(author_name="Strindberg, August", format="ris")
 sparql_query(query="SELECT ?author (COUNT(?work) AS ?count) WHERE { ?work dc:creator ?author } GROUP BY ?author ORDER BY DESC(?count) LIMIT 10")
 ```
 
-## 🌐 Remote URL (efter Render-deployment)
+## 🌐 Lokal HTTP-transport (valfritt)
 
-Använd i ChatGPT eller andra MCP-klienter:
+Standard-transporten är stdio. Om du vill köra en lokal HTTP-server:
 
-```
-https://your-service.onrender.com/sse
+```bash
+python kb_mcp_server.py --http --port 8000
 ```
 
 ### Endpoints
@@ -303,9 +281,6 @@ kb-mcp-server/
 │   ├── __init__.py
 │   └── api_client.py     # HTTP-klient och hjälpfunktioner
 ├── requirements.txt      # Python-dependencies
-├── Procfile             # Render startkommando
-├── render.yaml          # Render Blueprint
-├── Dockerfile           # Docker-image
 ├── test_kb_mcp.py       # Testsvit
 ├── claude_desktop_config.example.json
 ├── TOOL_DESIGN.md       # Verktygsdesign
