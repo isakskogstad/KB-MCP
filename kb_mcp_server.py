@@ -7,7 +7,11 @@ Stöder:
 - Lokal installation (stdio) för Claude Desktop, Claude Code
 - Remote deployment (HTTP) för ChatGPT, Render hosting
 
-Version: 2.2.0
+Version: 2.3.0
+
+Nya funktioner i 2.3.0:
+- Biblioteksstatistik (bibstat.kb.se) — sökning i offentlig biblioteksstatistik från 2014+
+- Nya verktyg: bibstat_search_statistics, bibstat_get_term_definitions
 
 Nya funktioner i 2.2.0:
 - Automatisk retry med exponentiell backoff
@@ -4040,6 +4044,140 @@ async def year_range_search(
 
 
 # ============================================================================
+# BIBSTAT - Biblioteksstatistik (bibstat.kb.se)
+# ============================================================================
+
+def _bibstat_format_observation(obs: Dict[str, Any]) -> str:
+    """Formaterar en biblioteksstatistik-observation till läsbar rad."""
+    parts: List[str] = []
+    if obs.get("term"):
+        parts.append(f"Term: {obs['term']}")
+    if obs.get("sampleYear"):
+        parts.append(f"År: {obs['sampleYear']}")
+    if obs.get("value") is not None:
+        parts.append(f"Värde: {obs['value']}")
+    lib = obs.get("library")
+    if lib:
+        if isinstance(lib, dict):
+            lib_name = lib.get("name") or lib.get("@id") or str(lib)
+        else:
+            lib_name = str(lib)
+        parts.append(f"Bibliotek: {lib_name}")
+    if obs.get("modified"):
+        parts.append(f"Uppdaterad: {obs['modified']}")
+    return " | ".join(parts)
+
+
+def _bibstat_format_term(term: Dict[str, Any]) -> str:
+    """Formaterar en termdefinition till läsbar rad."""
+    parts: List[str] = []
+    if term.get("key"):
+        parts.append(f"Nyckel: {term['key']}")
+    label = term.get("label")
+    if label:
+        if isinstance(label, dict):
+            label = label.get("sv") or label.get("@value") or next(iter(label.values()), "")
+        parts.append(f"Namn: {label}")
+    desc = term.get("description")
+    if desc:
+        if isinstance(desc, dict):
+            desc = desc.get("sv") or desc.get("@value") or next(iter(desc.values()), "")
+        parts.append(f"Beskrivning: {desc}")
+    if term.get("category"):
+        parts.append(f"Kategori: {term['category']}")
+    return " | ".join(parts)
+
+
+@mcp.tool()
+async def bibstat_search_statistics(
+    term: str = Field(default="", description="Filtrera på specifik term, t.ex. 'Folk54' (antal besök). Tomt = alla termer."),
+    date_from: str = Field(default="", description="ISO-8601 datum (YYYY-MM-DDTHH:mm:ss) — observationer uppdaterade från och med detta datum"),
+    date_to: str = Field(default="", description="ISO-8601 datum — observationer uppdaterade innan detta datum"),
+    limit: int = Field(default=100, ge=1, le=1000, description="Max antal observationer"),
+    offset: int = Field(default=0, ge=0, description="Paginering — startposition")
+) -> str:
+    """
+    Sök i svensk biblioteksstatistik från KB (bibstat.kb.se).
+
+    Officiell biblioteksstatistik för offentligt finansierade bibliotek
+    (folk-, skol-, universitets- och sjukhusbibliotek) från verksamhetsår
+    2014 och framåt. JSON-LD, licens CC0.
+    """
+    try:
+        params: Dict[str, Any] = {"limit": limit, "offset": offset}
+        if term:
+            params["term"] = term
+        if date_from:
+            params["date_from"] = date_from
+        if date_to:
+            params["date_to"] = date_to
+
+        response = await api_client.get(
+            f"{URLS['bibstat']}/data",
+            params=params,
+            accept="application/ld+json"
+        )
+        data = response.json()
+        observations = data.get("@graph", []) or []
+
+        lines = [
+            "## Biblioteksstatistik",
+            f"**Antal observationer:** {len(observations)}",
+        ]
+        if term:
+            lines.append(f"**Term:** {term}")
+        if date_from:
+            lines.append(f"**Från:** {date_from}")
+        if date_to:
+            lines.append(f"**Till:** {date_to}")
+        if offset:
+            lines.append(f"**Offset:** {offset}")
+        lines.append("")
+
+        if not observations:
+            lines.append("Inga observationer hittades med de angivna parametrarna.")
+        else:
+            for i, obs in enumerate(observations, 1):
+                lines.append(f"{i}. {_bibstat_format_observation(obs)}")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return handle_api_error(e, "bibstat_search_statistics")
+
+
+@mcp.tool()
+async def bibstat_get_term_definitions() -> str:
+    """
+    Hämtar alla termdefinitioner för biblioteksstatistiken från KB.
+
+    Lista över giltiga termer (t.ex. 'Folk54' = antal besök i folkbibliotek,
+    'Skol24' = skolbibliotek-variabler) som kan användas med
+    bibstat_search_statistics.
+    """
+    try:
+        response = await api_client.get(
+            f"{URLS['bibstat']}/def/terms",
+            accept="application/ld+json"
+        )
+        data = response.json()
+        terms = data.get("@graph", []) or []
+
+        lines = [
+            "## Termdefinitioner för Biblioteksstatistik",
+            f"**Totalt antal termer:** {len(terms)}",
+            ""
+        ]
+        for i, term in enumerate(terms, 1):
+            lines.append(f"{i}. {_bibstat_format_term(term)}")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return handle_api_error(e, "bibstat_get_term_definitions")
+
+
+# ============================================================================
 # SERVER RUNNERS
 # ============================================================================
 
@@ -4061,9 +4199,9 @@ def run_http(host: str = "0.0.0.0", port: int = 8000):
     async def info(request):
         return JSONResponse({
             "name": "kb-api",
-            "version": "2.2.0",
+            "version": "2.3.0",
             "description": "Kungliga bibliotekets öppna API:er via MCP",
-            "tools": 65,
+            "tools": 67,
             "resources": 11,
             "prompts": 11,
             "features": [
@@ -4073,7 +4211,7 @@ def run_http(host: str = "0.0.0.0", port: int = 8000):
                 "batch operations",
                 "citation generation"
             ],
-            "endpoints": ["libris", "ksamsok", "oaipmh", "data.kb.se", "swepub", "id.kb.se", "sparql"]
+            "endpoints": ["libris", "ksamsok", "oaipmh", "data.kb.se", "swepub", "id.kb.se", "sparql", "bibstat"]
         })
     
     # Hämta FastMCP:s SSE-app

@@ -71,6 +71,7 @@ URLS = {
     "kb_data": "https://data.kb.se",
     "swepub": "https://libris.kb.se/xsearch",  # Swepub via Libris
     "idkb": "https://id.kb.se",
+    "bibstat": "https://bibstat.kb.se",
 }
 
 # För bakåtkompatibilitet
